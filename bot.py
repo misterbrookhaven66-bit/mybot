@@ -1,5 +1,7 @@
 import os
 import json
+import requests
+from bs4 import BeautifulSoup
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
@@ -8,7 +10,9 @@ OWNER_ID = 8232776469
 
 DATA_FILE = "links.json"
 
-DEFAULT_TEXT = "Превет! Этот бот для получение script с тгк Mrscript права принадлежат им же"
+DEFAULT_TEXT = "Права на бота принадлежат Mr.Script"
+
+MAX_TEXT_LENGTH = 3000
 
 
 def load_links():
@@ -23,12 +27,43 @@ def save_links(links):
         json.dump(links, f, ensure_ascii=False, indent=2)
 
 
+def fetch_text_from_url(url):
+    try:
+        headers = {"User-Agent": "Mozilla/5.0"}
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        for tag in soup(["script", "style", "nav", "header", "footer"]):
+            tag.decompose()
+
+        text = soup.get_text(separator="\n")
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        clean_text = "\n".join(lines)
+
+        if len(clean_text) > MAX_TEXT_LENGTH:
+            clean_text = clean_text[:MAX_TEXT_LENGTH] + "..."
+
+        return clean_text if clean_text else "Не удалось найти текст на странице."
+    except Exception as e:
+        return f"Ошибка при загрузке страницы: {e}"
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     links = load_links()
     if context.args:
         code = context.args[0]
-        text = links.get(code, DEFAULT_TEXT)
-        await update.message.reply_text(text)
+        entry = links.get(code)
+
+        if entry is None:
+            await update.message.reply_text(DEFAULT_TEXT)
+            return
+
+        if entry["type"] == "text":
+            await update.message.reply_text(entry["value"])
+        elif entry["type"] == "url":
+            text = fetch_text_from_url(entry["value"])
+            await update.message.reply_text(text)
     else:
         await update.message.reply_text(DEFAULT_TEXT)
 
@@ -39,7 +74,7 @@ async def add_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if len(context.args) < 2:
         await update.message.reply_text(
-            "Использование: /add код текст\nПример: /add site1 Привет, это текст с сайта"
+            "Использование: /add код текст\nПример: /add site1 Привет, это текст"
         )
         return
 
@@ -47,14 +82,42 @@ async def add_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = " ".join(context.args[1:])
 
     links = load_links()
-    links[code] = text
+    links[code] = {"type": "text", "value": text}
     save_links(links)
 
     bot_username = (await context.bot.get_me()).username
     link = f"https://t.me/{bot_username}?start={code}"
 
     await update.message.reply_text(
-        f"Готово! Код '{code}' сохранён.\nСсылка:\n{link}"
+        f"Готово! Код '{code}' сохранён (текст).\nСсылка:\n{link}"
+    )
+
+
+async def add_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != OWNER_ID:
+        return
+
+    if len(context.args) < 2:
+        await update.message.reply_text(
+            "Использование: /addurl код ссылка_на_сайт\n"
+            "Пример: /addurl site1 https://example.com/page"
+        )
+        return
+
+    code = context.args[0]
+    url = context.args[1]
+
+    links = load_links()
+    links[code] = {"type": "url", "value": url}
+    save_links(links)
+
+    bot_username = (await context.bot.get_me()).username
+    link = f"https://t.me/{bot_username}?start={code}"
+
+    await update.message.reply_text(
+        f"Готово! Код '{code}' сохранён (сайт).\n"
+        f"Бот будет брать текст с: {url}\n"
+        f"Ссылка:\n{link}"
     )
 
 
@@ -69,10 +132,13 @@ async def list_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     bot_username = (await context.bot.get_me()).username
     lines = []
-    for code, text in links.items():
+    for code, entry in links.items():
         link = f"https://t.me/{bot_username}?start={code}"
-        preview = text if len(text) <= 50 else text[:50] + "..."
-        lines.append(f"{code} → {preview}\n{link}")
+        kind = "текст" if entry["type"] == "text" else "сайт"
+        preview = entry["value"]
+        if len(preview) > 50:
+            preview = preview[:50] + "..."
+        lines.append(f"{code} ({kind}) → {preview}\n{link}")
 
     await update.message.reply_text("\n\n".join(lines))
 
@@ -101,7 +167,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         "Команды управления:\n"
-        "/add код текст — добавить новую ссылку\n"
+        "/add код текст — сохранить готовый текст под кодом\n"
+        "/addurl код ссылка — бот будет брать текст с сайта каждый раз\n"
         "/list — показать все ссылки\n"
         "/delete код — удалить ссылку\n"
         "/help — это сообщение"
@@ -112,6 +179,7 @@ def main():
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("add", add_link))
+    app.add_handler(CommandHandler("addurl", add_url))
     app.add_handler(CommandHandler("list", list_links))
     app.add_handler(CommandHandler("delete", delete_link))
     app.add_handler(CommandHandler("help", help_command))
