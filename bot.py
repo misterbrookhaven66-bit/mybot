@@ -8,7 +8,7 @@ OWNER_ID = 8232776469
 
 DATA_FILE = "links.json"
 
-DEFAULT_TEXT = "Привет! Бот работает."
+DEFAULT_TEXT = "Превет! Этот бот для получение script с тгк Mrscript права принадлежат им же"
 
 
 def load_links():
