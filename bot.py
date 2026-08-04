@@ -39,17 +39,26 @@ def fetch_text_from_url(url):
         response.raise_for_status()
         soup = BeautifulSoup(response.text, "html.parser")
 
+        # Сначала ищем именно блок кода (pre / code / textarea),
+        # в котором встречается ключевое слово loadstring
+        for tag_name in ["textarea", "pre", "code"]:
+            for tag in soup.find_all(tag_name):
+                block_text = tag.get_text()
+                if "loadstring" in block_text.lower():
+                    return block_text.strip()
+
+        # Если такого блока не нашли - ищем построчно среди всего текста
         for tag in soup(["script", "style", "nav", "header", "footer"]):
             tag.decompose()
 
         text = soup.get_text(separator="\n")
         lines = [line.strip() for line in text.splitlines() if line.strip()]
-        clean_text = "\n".join(lines)
 
-        if len(clean_text) > MAX_TEXT_LENGTH:
-            clean_text = clean_text[:MAX_TEXT_LENGTH] + "..."
+        for line in lines:
+            if "loadstring" in line.lower():
+                return line
 
-        return clean_text if clean_text else "Не удалось найти текст на странице."
+        return "На странице не найден текст с 'loadstring'."
     except Exception as e:
         return f"Ошибка при загрузке страницы: {e}"
 
