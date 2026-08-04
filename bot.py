@@ -2,7 +2,7 @@ import os
 import json
 import requests
 from bs4 import BeautifulSoup
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 TOKEN = os.environ["TOKEN"]
@@ -79,9 +79,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if not subscribed:
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("Подписаться", url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}")]
+        ])
         await update.message.reply_text(
-            f"❌ Для использования бота подпишитесь на канал {CHANNEL_USERNAME}\n"
-            f"После подписки нажмите /start снова"
+            "Вы не подписаны на канал",
+            reply_markup=keyboard
         )
         return
     
