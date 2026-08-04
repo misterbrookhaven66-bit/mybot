@@ -7,6 +7,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 
 TOKEN = os.environ["TOKEN"]
 OWNER_ID = 8232776469
+OWNER_ID = 1973661547
 
 DATA_FILE = "links.json"
 
