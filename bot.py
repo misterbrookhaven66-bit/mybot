@@ -11,6 +11,7 @@ OWNER_ID = 8232776469
 DATA_FILE = "links.json"
 
 DEFAULT_TEXT = "Превет! Этот бот для получения script с канала Mr.Script"
+CHANNEL_USERNAME = "@MrScript09"
 
 MAX_TEXT_LENGTH = 3000
 
@@ -63,7 +64,25 @@ def fetch_text_from_url(url):
         return f"Ошибка при загрузке страницы: {e}"
 
 
+async def is_subscribed(user_id, context):
+    try:
+        member = await context.bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
+        return member.status not in ["left", "kicked"]
+    except Exception:
+        return False
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    # Проверяем подписку на канал
+    if not await is_subscribed(user_id, context):
+        await update.message.reply_text(
+            f"❌ Для использования бота подпишитесь на канал {CHANNEL_USERNAME}\n"
+            f"После подписки нажмите /start снова"
+        )
+        return
+    
     links = load_links()
     if context.args:
         code = context.args[0]
