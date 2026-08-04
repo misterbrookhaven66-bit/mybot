@@ -65,18 +65,20 @@ def fetch_text_from_url(url):
 
 
 async def is_subscribed(user_id, context):
-    try:
-        member = await context.bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
-        return member.status not in ["left", "kicked"]
-    except Exception:
-        return False
+    member = await context.bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
+    return member.status not in ["left", "kicked"]
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    
-    # Проверяем подписку на канал
-    if not await is_subscribed(user_id, context):
+
+    try:
+        subscribed = await is_subscribed(user_id, context)
+    except Exception as e:
+        await update.message.reply_text(f"ОШИБКА ПРОВЕРКИ: {e}")
+        return
+
+    if not subscribed:
         await update.message.reply_text(
             f"❌ Для использования бота подпишитесь на канал {CHANNEL_USERNAME}\n"
             f"После подписки нажмите /start снова"
