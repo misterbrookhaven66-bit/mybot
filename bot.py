@@ -12,6 +12,7 @@ DATA_FILE = "links.json"
 
 DEFAULT_TEXT = "Превет! Этот бот для получения script с канала Mr.Script"
 CHANNEL_USERNAME = "@MrScript09"
+CHANNEL_USERNAME2 = "@MrScriptchat"
 
 MAX_TEXT_LENGTH = 3000
 
@@ -65,8 +66,12 @@ def fetch_text_from_url(url):
 
 
 async def is_subscribed(user_id, context):
-    member = await context.bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
-    return member.status not in ["left", "kicked"]
+    try:
+        member = await context.bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
+        member2 = await context.bot.get_chat_member(chat_id=CHANNEL_USERNAME2, user_id=user_id)
+        return member.status not in ["left", "kicked"] and member2.status not in ["left", "kicked"]
+    except Exception:
+        return False
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -80,10 +85,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not subscribed:
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("Подписаться", url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}")]
+            [InlineKeyboardButton("📢 Подписаться на Mr.Script", url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}")],
+            [InlineKeyboardButton("💬 Подписаться на Mr.Script Chat", url=f"https://t.me/{CHANNEL_USERNAME2.lstrip('@')}")],
+            [InlineKeyboardButton("✅ Проверить подписку", callback_data="check_subscription")]
         ])
         await update.message.reply_text(
-            "Вы не подписаны на канал",
+            "❌ Вы не подписаны на наши каналы!\n\n"
+            "Подпишитесь на оба канала и нажмите кнопку проверки:",
             reply_markup=keyboard
         )
         return
@@ -105,6 +113,33 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(text)
     else:
         await update.message.reply_text(DEFAULT_TEXT)
+
+
+async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    
+    try:
+        subscribed = await is_subscribed(user_id, context)
+    except Exception as e:
+        await query.edit_message_text(f"ОШИБКА ПРОВЕРКИ: {e}")
+        return
+    
+    if subscribed:
+        await query.edit_message_text("✅ Подписка подтверждена! Теперь вы можете использовать бота.\nНажмите /start")
+    else:
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📢 Подписаться на Mr.Script", url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}")],
+            [InlineKeyboardButton("💬 Подписаться на Mr.Script Chat", url=f"https://t.me/{CHANNEL_USERNAME2.lstrip('@')}")],
+            [InlineKeyboardButton("✅ Проверить подписку", callback_data="check_subscription")]
+        ])
+        await query.edit_message_text(
+            "❌ Вы всё ещё не подписаны на оба канала!\n\n"
+            "Подпишитесь и нажмите кнопку проверки:",
+            reply_markup=keyboard
+        )
 
 
 async def add_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -222,6 +257,7 @@ def main():
     app.add_handler(CommandHandler("list", list_links))
     app.add_handler(CommandHandler("delete", delete_link))
     app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CallbackQueryHandler(check_subscription, pattern="check_subscription"))
     app.run_polling()
 
 
