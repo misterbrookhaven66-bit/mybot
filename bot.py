@@ -74,7 +74,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         if entry["type"] == "text":
-            await update.message.reply_text(entry["value"])
+            formatted = f"```\n{entry['value']}\n```"
+            await update.message.reply_text(formatted, parse_mode="Markdown")
         elif entry["type"] == "url":
             text = fetch_text_from_url(entry["value"])
             await update.message.reply_text(text)
