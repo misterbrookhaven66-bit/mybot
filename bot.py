@@ -2,9 +2,10 @@ import os
 import json
 import requests
 import re
+import random
 from bs4 import BeautifulSoup
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
+from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler
 
 TOKEN = os.environ["TOKEN"]
 OWNER_ID = 8232776469
@@ -15,7 +16,7 @@ PARSED_SCRIPTS_FILE = "parsed_scripts.json"
 DEFAULT_TEXT = "Превет! Этот бот для получения script с канала Mr.Script"
 CHANNEL_USERNAME = "@MrScript09"
 CHANNEL_USERNAME2 = "@MrScriptchat"
-SOURCE_CHANNEL = "@+YHEA_N06lwMzNDli"  # Новый канал для парсинга
+SOURCE_CHANNEL = "@+YHEA_N06lwMzNDli"  # Ваш канал
 
 MAX_TEXT_LENGTH = 3000
 
@@ -56,15 +57,12 @@ def fetch_text_from_url(url):
         response.raise_for_status()
         soup = BeautifulSoup(response.text, "html.parser")
 
-        # Сначала ищем именно блок кода (pre / code / textarea),
-        # в котором встречается ключевое слово loadstring
         for tag_name in ["textarea", "pre", "code"]:
             for tag in soup.find_all(tag_name):
                 block_text = tag.get_text()
                 if "loadstring" in block_text.lower():
                     return block_text.strip()
 
-        # Если такого блока не нашли - ищем построчно среди всего текста
         for tag in soup(["script", "style", "nav", "header", "footer"]):
             tag.decompose()
 
@@ -210,72 +208,63 @@ async def add_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def parse_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Автоматический парсинг скриптов из канала и создание ссылок"""
+async def import_script(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Импорт одного случайного скрипта из канала"""
     if update.effective_user.id != OWNER_ID:
+        await update.message.reply_text("⛔ У вас нет прав для этой команды.")
         return
 
-    await update.message.reply_text("🔄 Начинаю парсинг канала...")
+    await update.message.reply_text("🎲 Ищу случайный скрипт в канале...")
     
     try:
-        # Получаем последние сообщения из канала
+        # Получаем последние 50 сообщений из канала
         messages = []
         async for message in context.bot.get_chat_history(chat_id=SOURCE_CHANNEL, limit=50):
-            if message.text:
+            if message.text and "loadstring" in message.text.lower():
                 messages.append(message)
         
+        if not messages:
+            await update.message.reply_text("ℹ️ В канале не найдено скриптов с 'loadstring'.")
+            return
+        
+        # Выбираем случайное сообщение
+        random_message = random.choice(messages)
+        
+        # Извлекаем скрипт
+        text = random_message.text
+        script_code = f"script_{random_message.message_id}"
+        
+        # Сохраняем в базу
         parsed_scripts = load_parsed_scripts()
         links = load_links()
-        new_scripts_count = 0
         
-        for msg in messages:
-            text = msg.text
-            
-            # Ищем loadstring в тексте
-            if "loadstring" in text.lower():
-                # Извлекаем код из сообщения
-                code_pattern = r'loadstring\(.*?\)'
-                matches = re.findall(code_pattern, text, re.IGNORECASE)
-                
-                if matches:
-                    # Генерируем уникальный код на основе ID сообщения
-                    script_code = f"script_{msg.message_id}"
-                    
-                    # Проверяем, не сохранён ли уже этот скрипт
-                    if script_code not in parsed_scripts:
-                        # Сохраняем скрипт
-                        full_script = text.strip()
-                        parsed_scripts[script_code] = {
-                            "message_id": msg.message_id,
-                            "date": str(msg.date),
-                            "script": full_script
-                        }
-                        
-                        # Добавляем в основное хранилище ссылок
-                        links[script_code] = {"type": "text", "value": full_script}
-                        new_scripts_count += 1
+        # Сохраняем скрипт
+        full_script = text.strip()
+        parsed_scripts[script_code] = {
+            "message_id": random_message.message_id,
+            "date": str(random_message.date),
+            "script": full_script
+        }
+        links[script_code] = {"type": "text", "value": full_script}
         
         # Сохраняем изменения
         save_parsed_scripts(parsed_scripts)
         save_links(links)
         
         bot_username = (await context.bot.get_me()).username
+        link = f"https://t.me/{bot_username}?start={script_code}"
         
-        # Формируем список новых скриптов
-        if new_scripts_count > 0:
-            response = f"✅ Найдено и сохранено {new_scripts_count} новых скриптов!\n\n"
-            response += "📌 Вот ссылки на новые скрипты:\n"
-            
-            for script_code in list(parsed_scripts.keys())[-new_scripts_count:]:
-                link = f"https://t.me/{bot_username}?start={script_code}"
-                response += f"\n🔗 {script_code}: {link}"
-            
-            await update.message.reply_text(response)
-        else:
-            await update.message.reply_text("ℹ️ Новых скриптов не найдено.")
+        # Формируем красивый ответ
+        response = f"✅ Найден случайный скрипт!\n\n"
+        response += f"📌 Код: {script_code}\n"
+        response += f"📅 Дата: {random_message.date}\n"
+        response += f"🔗 Ссылка: {link}\n\n"
+        response += f"📝 Превью скрипта:\n```\n{full_script[:200]}...\n```"
+        
+        await update.message.reply_text(response)
             
     except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка при парсинге: {e}")
+        await update.message.reply_text(f"❌ Ошибка при импорте: {e}")
 
 
 async def list_parsed_scripts(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -338,8 +327,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/addurl код ссылка — бот будет брать текст с сайта каждый раз\n"
         "/list — показать все ссылки\n"
         "/delete код — удалить ссылку\n\n"
-        "🤖 Автоматический парсинг:\n"
-        "/parse — автоматически собрать скрипты из канала\n"
+        "🤖 Автоматический импорт:\n"
+        "/import — найти случайный скрипт из канала\n"
         "/parsed — показать все автоматически собранные скрипты\n"
         "/delparsed код — удалить автоматически собранный скрипт\n\n"
         "/help — это сообщение"
@@ -357,14 +346,15 @@ def main():
     app.add_handler(CommandHandler("delete", delete_link))
     app.add_handler(CommandHandler("help", help_command))
     
-    # Команды для автоматического парсинга
-    app.add_handler(CommandHandler("parse", parse_channel))
+    # Команды для автоматического импорта
+    app.add_handler(CommandHandler("import", import_script))
     app.add_handler(CommandHandler("parsed", list_parsed_scripts))
     app.add_handler(CommandHandler("delparsed", delete_parsed_script))
     
     # Обработчик callback-запросов (кнопки)
     app.add_handler(CallbackQueryHandler(check_subscription, pattern="check_subscription"))
     
+    print("🤖 Бот запущен и готов к работе!")
     app.run_polling()
 
 
