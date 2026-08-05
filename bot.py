@@ -1,11 +1,16 @@
 import os
 import json
 import requests
-import re
-import random
 from bs4 import BeautifulSoup
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+    CallbackQueryHandler,
+    MessageHandler,
+    filters,
+)
 
 TOKEN = os.environ["TOKEN"]
 OWNER_ID = 8232776469
@@ -13,10 +18,15 @@ OWNER_ID = 8232776469
 DATA_FILE = "links.json"
 PARSED_SCRIPTS_FILE = "parsed_scripts.json"
 
-DEFAULT_TEXT = "Превет! Этот бот для получения script с канала Mr.Script"
+DEFAULT_TEXT = "Привет! Этот бот для получения script с канала Mr.Script"
 CHANNEL_USERNAME = "@MrScript09"
 CHANNEL_USERNAME2 = "@MrScriptchat"
-SOURCE_CHANNEL = "@+YHEA_N06lwMzNDli"  # Ваш канал
+# У приватного канала (инвайт-ссылка вида https://t.me/+xxxxx) НЕТ @username,
+# поэтому нужен числовой chat_id (обычно вида -100xxxxxxxxxx).
+# Если оставить None — бот при первом новом посте в канале пришлёт вам в личку
+# правильное значение chat_id, которое нужно будет вписать сюда.
+SOURCE_CHANNEL_ID_RAW = os.environ.get("SOURCE_CHANNEL_ID")  # можно задать через переменную окружения
+SOURCE_CHANNEL_ID = int(SOURCE_CHANNEL_ID_RAW) if SOURCE_CHANNEL_ID_RAW else None
 
 MAX_TEXT_LENGTH = 3000
 
@@ -108,7 +118,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=keyboard
         )
         return
-    
+
     links = load_links()
     if context.args:
         code = context.args[0]
@@ -131,15 +141,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    
+
     user_id = query.from_user.id
-    
+
     try:
         subscribed = await is_subscribed(user_id, context)
     except Exception as e:
         await query.edit_message_text(f"ОШИБКА ПРОВЕРКИ: {e}")
         return
-    
+
     if subscribed:
         await query.edit_message_text("✅ Подписка подтверждена! Теперь вы можете использовать бота.\nНажмите /start")
     else:
@@ -208,63 +218,167 @@ async def add_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def import_script(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Импорт одного случайного скрипта из канала"""
+async def list_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показать все сохранённые ссылки (ручные и автоматические)"""
     if update.effective_user.id != OWNER_ID:
-        await update.message.reply_text("⛔ У вас нет прав для этой команды.")
         return
 
-    await update.message.reply_text("🎲 Ищу случайный скрипт в канале...")
-    
-    try:
-        # Получаем последние 50 сообщений из канала
-        messages = []
-        async for message in context.bot.get_chat_history(chat_id=SOURCE_CHANNEL, limit=50):
-            if message.text and "loadstring" in message.text.lower():
-                messages.append(message)
-        
-        if not messages:
-            await update.message.reply_text("ℹ️ В канале не найдено скриптов с 'loadstring'.")
-            return
-        
-        # Выбираем случайное сообщение
-        random_message = random.choice(messages)
-        
-        # Извлекаем скрипт
-        text = random_message.text
-        script_code = f"script_{random_message.message_id}"
-        
-        # Сохраняем в базу
-        parsed_scripts = load_parsed_scripts()
-        links = load_links()
-        
-        # Сохраняем скрипт
-        full_script = text.strip()
-        parsed_scripts[script_code] = {
-            "message_id": random_message.message_id,
-            "date": str(random_message.date),
-            "script": full_script
-        }
-        links[script_code] = {"type": "text", "value": full_script}
-        
-        # Сохраняем изменения
-        save_parsed_scripts(parsed_scripts)
+    links = load_links()
+    if not links:
+        await update.message.reply_text("ℹ️ Сохранённых ссылок нет.")
+        return
+
+    bot_username = (await context.bot.get_me()).username
+    response = f"📚 Всего ссылок: {len(links)}\n\n"
+
+    items = list(links.items())[:30]
+    for i, (code, entry) in enumerate(items, 1):
+        link = f"https://t.me/{bot_username}?start={code}"
+        if entry["type"] == "text":
+            preview = entry["value"][:50].replace("\n", " ") + "..."
+            response += f"{i}. {code} (текст)\n   {preview}\n   {link}\n\n"
+        else:
+            response += f"{i}. {code} (сайт)\n   {entry['value']}\n   {link}\n\n"
+
+    if len(links) > 30:
+        response += f"... и ещё {len(links) - 30}"
+
+    await update.message.reply_text(response)
+
+
+async def delete_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Удалить сохранённую ссылку (ручную или автоматическую)"""
+    if update.effective_user.id != OWNER_ID:
+        return
+
+    if len(context.args) < 1:
+        await update.message.reply_text("Использование: /delete код")
+        return
+
+    code = context.args[0]
+    links = load_links()
+
+    if code in links:
+        del links[code]
         save_links(links)
-        
-        bot_username = (await context.bot.get_me()).username
-        link = f"https://t.me/{bot_username}?start={script_code}"
-        
-        # Формируем красивый ответ
-        response = f"✅ Найден случайный скрипт!\n\n"
-        response += f"📌 Код: {script_code}\n"
-        response += f"📅 Дата: {random_message.date}\n"
-        response += f"🔗 Ссылка: {link}\n\n"
-        response += f"📝 Превью скрипта:\n```\n{full_script[:200]}...\n```"
-        
-        await update.message.reply_text(response)
-            
-    except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка при импорте: {e}")
+
+        parsed_scripts = load_parsed_scripts()
+        if code in parsed_scripts:
+            del parsed_scripts[code]
+            save_parsed_scripts(parsed_scripts)
+
+        await update.message.reply_text(f"✅ Ссылка '{code}' удалена.")
+    else:
+        await update.message.reply_text(f"❌ Ссылка '{code}' не найдена.")
+
+
+async def handle_forwarded_script(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Автосохранение скрипта: владелец пересылает (forward) боту сообщение
+    из канала-источника, и бот сам сохраняет его как скрипт с кодом.
+
+    Bot API не позволяет ботам самостоятельно читать историю канала,
+    поэтому вместо /import используется механизм пересылки сообщений.
+    """
+    if update.effective_user is None or update.effective_user.id != OWNER_ID:
+        return
+
+    message = update.message
+    if message is None or not message.text:
+        return
+
+    if "loadstring" not in message.text.lower():
+        return
+
+    script_code = f"script_{message.forward_from_message_id or message.message_id}"
+    full_script = message.text.strip()
+
+    parsed_scripts = load_parsed_scripts()
+    links = load_links()
+
+    parsed_scripts[script_code] = {
+        "message_id": message.forward_from_message_id or message.message_id,
+        "date": str(message.date),
+        "script": full_script,
+    }
+    links[script_code] = {"type": "text", "value": full_script}
+
+    save_parsed_scripts(parsed_scripts)
+    save_links(links)
+
+    bot_username = (await context.bot.get_me()).username
+    link = f"https://t.me/{bot_username}?start={script_code}"
+
+    response = (
+        f"✅ Скрипт сохранён из пересланного сообщения!\n\n"
+        f"📌 Код: {script_code}\n"
+        f"🔗 Ссылка: {link}\n\n"
+        f"📝 Превью:\n```\n{full_script[:200]}\n```"
+    )
+    await message.reply_text(response, parse_mode="Markdown")
+
+
+async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Автоматически ловит каждый новый пост в канале-источнике (бот должен быть админом),
+    оформляет скрипт и присылает владельцу готовую ссылку в личные сообщения.
+    """
+    message = update.channel_post
+    if message is None or not message.text:
+        return
+
+    chat_id = message.chat.id
+
+    # Пока SOURCE_CHANNEL_ID не настроен — один раз подсказываем владельцу его значение
+    if SOURCE_CHANNEL_ID is None:
+        try:
+            await context.bot.send_message(
+                OWNER_ID,
+                f"ℹ️ Обнаружен пост в канале с chat_id: {chat_id}\n"
+                f"Впишите это число в переменную SOURCE_CHANNEL_ID в коде бота "
+                f"(или в переменную окружения SOURCE_CHANNEL_ID), затем перезапустите бота."
+            )
+        except Exception:
+            pass
+        return
+
+    if chat_id != SOURCE_CHANNEL_ID:
+        return  # пост из другого чата/канала — игнорируем
+
+    text = message.text
+    if "loadstring" not in text.lower():
+        return  # не похоже на скрипт — пропускаем
+
+    script_code = f"script_{message.message_id}"
+    full_script = text.strip()
+
+    parsed_scripts = load_parsed_scripts()
+    links = load_links()
+
+    parsed_scripts[script_code] = {
+        "message_id": message.message_id,
+        "date": str(message.date),
+        "script": full_script,
+    }
+    links[script_code] = {"type": "text", "value": full_script}
+
+    save_parsed_scripts(parsed_scripts)
+    save_links(links)
+
+    bot_username = (await context.bot.get_me()).username
+    link = f"https://t.me/{bot_username}?start={script_code}"
+
+    response = (
+        f"✅ Новый скрипт автоматически найден в канале!\n\n"
+        f"📌 Код: {script_code}\n"
+        f"📅 Дата: {message.date}\n"
+        f"🔗 Ссылка: {link}\n\n"
+        f"📝 Превью:\n```\n{full_script[:200]}\n```"
+    )
+    try:
+        await context.bot.send_message(OWNER_ID, response, parse_mode="Markdown")
+    except Exception:
+        pass
 
 
 async def list_parsed_scripts(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -276,18 +390,18 @@ async def list_parsed_scripts(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not parsed_scripts:
         await update.message.reply_text("ℹ️ Автоматически сохранённых скриптов нет.")
         return
-    
+
     bot_username = (await context.bot.get_me()).username
     response = f"📚 Всего автоматически сохранённых скриптов: {len(parsed_scripts)}\n\n"
-    
+
     for i, (code, data) in enumerate(list(parsed_scripts.items())[:20], 1):
         link = f"https://t.me/{bot_username}?start={code}"
         preview = data.get('script', '')[:50] + "..."
         response += f"{i}. {code}\n   📅 {data.get('date', 'Unknown')}\n   {preview}\n   {link}\n\n"
-    
+
     if len(parsed_scripts) > 20:
         response += f"... и ещё {len(parsed_scripts) - 20} скриптов"
-    
+
     await update.message.reply_text(response)
 
 
@@ -299,16 +413,16 @@ async def delete_parsed_script(update: Update, context: ContextTypes.DEFAULT_TYP
     if len(context.args) < 1:
         await update.message.reply_text("Использование: /delparsed код_скрипта")
         return
-    
+
     code = context.args[0]
     parsed_scripts = load_parsed_scripts()
     links = load_links()
-    
+
     if code in parsed_scripts:
         del parsed_scripts[code]
         if code in links:
             del links[code]
-        
+
         save_parsed_scripts(parsed_scripts)
         save_links(links)
         await update.message.reply_text(f"✅ Скрипт '{code}' удалён.")
@@ -328,7 +442,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/list — показать все ссылки\n"
         "/delete код — удалить ссылку\n\n"
         "🤖 Автоматический импорт:\n"
-        "/import — найти случайный скрипт из канала\n"
+        "Бот сам следит за каналом-источником (нужны права админа) и при каждом "
+        "новом посте со словом 'loadstring' сохраняет скрипт и присылает вам ссылку в личку.\n"
+        "Для старых сообщений: перешлите (forward) их боту вручную — он сохранит их так же.\n"
         "/parsed — показать все автоматически собранные скрипты\n"
         "/delparsed код — удалить автоматически собранный скрипт\n\n"
         "/help — это сообщение"
@@ -337,7 +453,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     app = Application.builder().token(TOKEN).build()
-    
+
     # Основные команды
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("add", add_link))
@@ -345,15 +461,20 @@ def main():
     app.add_handler(CommandHandler("list", list_links))
     app.add_handler(CommandHandler("delete", delete_link))
     app.add_handler(CommandHandler("help", help_command))
-    
-    # Команды для автоматического импорта
-    app.add_handler(CommandHandler("import", import_script))
+
+    # Команды для просмотра автоматически собранных скриптов
     app.add_handler(CommandHandler("parsed", list_parsed_scripts))
     app.add_handler(CommandHandler("delparsed", delete_parsed_script))
-    
+
+    # Автоматическое обнаружение новых скриптов в канале (бот должен быть админом)
+    app.add_handler(MessageHandler(filters.ChatType.CHANNEL & filters.TEXT, handle_channel_post))
+
+    # Резервный способ: ручная пересылка старого сообщения из канала боту
+    app.add_handler(MessageHandler(filters.FORWARDED & filters.TEXT, handle_forwarded_script))
+
     # Обработчик callback-запросов (кнопки)
     app.add_handler(CallbackQueryHandler(check_subscription, pattern="check_subscription"))
-    
+
     print("🤖 Бот запущен и готов к работе!")
     app.run_polling()
 
