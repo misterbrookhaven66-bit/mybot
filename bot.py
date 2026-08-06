@@ -454,17 +454,18 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = Application.builder().token(TOKEN).build()
 
-    # Основные команды
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("add", add_link))
-    app.add_handler(CommandHandler("addurl", add_url))
-    app.add_handler(CommandHandler("list", list_links))
-    app.add_handler(CommandHandler("delete", delete_link))
-    app.add_handler(CommandHandler("help", help_command))
+    # Основные команды (исключаем посты каналов — у них нет update.message)
+    not_channel = ~filters.UpdateType.CHANNEL_POST
+    app.add_handler(CommandHandler("start", start, filters=not_channel))
+    app.add_handler(CommandHandler("add", add_link, filters=not_channel))
+    app.add_handler(CommandHandler("addurl", add_url, filters=not_channel))
+    app.add_handler(CommandHandler("list", list_links, filters=not_channel))
+    app.add_handler(CommandHandler("delete", delete_link, filters=not_channel))
+    app.add_handler(CommandHandler("help", help_command, filters=not_channel))
 
     # Команды для просмотра автоматически собранных скриптов
-    app.add_handler(CommandHandler("parsed", list_parsed_scripts))
-    app.add_handler(CommandHandler("delparsed", delete_parsed_script))
+    app.add_handler(CommandHandler("parsed", list_parsed_scripts, filters=not_channel))
+    app.add_handler(CommandHandler("delparsed", delete_parsed_script, filters=not_channel))
 
     # Автоматическое обнаружение новых скриптов в канале (бот должен быть админом)
     app.add_handler(MessageHandler(filters.ChatType.CHANNEL & filters.TEXT, handle_channel_post))
